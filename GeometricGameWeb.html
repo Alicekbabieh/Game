@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title> CUBE FLAPPY BIRD GEOMETRIC DASH GAME — Spikes, Moving Platforms, Levels</title>
+  <style>
+    html,body { height:100%; margin:0; background:#111; display:flex; align-items:center; justify-content:center; }
+    canvas { background: linear-gradient(#1a801f, #26963f); display:block; box-shadow: 0 6px 30px rgba(0,0,0,0.6); }
+    #help { position: fixed; left: 12px; bottom: 12px; color: #eee; font-family: Arial; font-size: 13px; opacity: .9; }
+    #startBtn { position: fixed; font-size: 32px; padding: 18px 40px; border: none; border-radius: 12px; cursor: pointer; 
+      background: #ffcc00; color: #000; font-family: Arial, sans-serif; box-shadow: 0 0 20px rgba(0,0,0,0.6); 
+      transition: 0.2s; z-index: 999; }
+    #startBtn:hover { background: #ffe066; transform: scale(1.05); }
+    #startBtn.hidden { display: none; }
+  </style>
+</head>
+<body>
+<button id="startBtn">START GAME</button>
+<canvas id="gameCanvas" width="960" height="960"></canvas>
+<div id="help">← → to move • ↑ or Space to jump • Enter to start / restart</div>
+<script>
+// CANVAS 
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+// Start button
+const startBtn = document.getElementById('startBtn');
+startBtn.addEventListener('click', () => {
+  startBtn.classList.add('hidden');
+  startLevel(0);
+});
+
+// GAME STATE 
+let gameState = "MENU"; // MENU, PLAYING, DEAD, LEVEL_COMPLETE
+let currentLevelIndex = 0;
+
+// cube
+const player = {
+  x: 120,
+  y: 100,
+  size: 42,       
+  xSpeed: 0,
+  ySpeed: 0,
+  maxSpeed: 6,
+  onGround: false,
+  color: "#ff4d4d"
+};
+
+const gravity = 0.85;
+const jumpPower = -16;
+const accel = 0.9;
+const friction = 0.80;
+
+// store previousY for better collision handling
+let prevY = player.y;
+
+//  CAMERA 
+let cameraX = 0;
+const cameraLag = 0.12; // smoothing factor
+
+//  INPUT 
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (gameState === "MENU" && e.key === "Enter") {
+    startLevel(0);
+  }
+  if (gameState === "DEAD" && e.key === "Enter") {
+    startLevel(currentLevelIndex);
+  }
+  if (gameState === "LEVEL_COMPLETE" && e.key === "Enter") {
+    startLevel(currentLevelIndex + 1);
+  }
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+function aabbOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+// LEVELS  
+const levels = [
+  // Level 1 
+  {
+    width: 2200,
+    platforms: [
+      {x: 0, y: 460, width: 3000, height: 80},           // ground
+      {x: 260, y: 360, width: 180, height: 20},
+      {x: 520, y: 300, width: 160, height: 20},
+      {x: 820, y: 260, width: 160, height: 20},
+      {x: 1120, y: 320, width: 140, height: 20},
+      {x: 1480, y: 360, width: 200, height: 20}
+    ],
+    // spikes
+    spikes: [
+      // ground spikes 
+      {x: 420, y: 460 - 18, width: 60, height: 18},
+      {x: 740, y: 460 - 18, width: 60, height: 18},
+      // spikes on floating platform (placed relative to platform x/y)
+      {x: 520 + 40, y: 300 - 18, width: 40, height: 18}
+    ],
+    movingPlatforms: [
+      // moving platform: moves left-right between x1 and x2
+      {x: 950, y: 320, width: 140, height: 18, x1: 900, x2: 1200, speed: 2},
+      {x: 160, y: 360, width: 120, height: 18, x1: 120, x2: 420, speed: 1.5},
+      {x: 1350, y: 300, width: 140, height: 18, x1: 1300, x2: 1680, speed: 2.2}
+    ],
+    goal: {x: 2000, y: 460 - 80, width: 36, height: 80, color: "#FFD54F"}, // flag
+    start: {x: 120, y: 380}
+  },
+
+  // Level 2 
+  {
+    width: 2400,
+    platforms: [
+      {x: 0, y: 460, width: 3000, height: 80},
+      {x: 340, y: 360, width: 160, height: 20},
+      {x: 560, y: 310, width: 130, height: 20},
+      {x: 740, y: 260, width: 120, height: 20},
+      {x: 980, y: 320, width: 180, height: 20},
+      {x: 1280, y: 280, width: 160, height: 20},
+      {x: 1680, y: 360, width: 220, height: 20}
+    ],
+    spikes: [
+      {x: 220, y: 460 - 18, width: 48, height: 18},
+      {x: 600, y: 310 - 18, width: 48, height: 18},
+      {x: 980 + 80, y: 320 - 18, width: 64, height: 18}
+    ],
+    movingPlatforms: [
+      {x: 430, y: 360, width: 120, height: 18, x1: 360, x2: 640, speed: 1.6},
+      {x: 1220, y: 280, width: 160, height: 18, x1: 1200, x2: 1460, speed: 2.0},
+      {x: 1520, y: 420, width: 200, height: 18, x1: 1400, x2: 1800, speed: 1.2}
+    ],
+    goal: {x: 2200, y: 460 - 80, width: 36, height: 80, color: "#FFD54F"},
+    start: {x: 120, y: 380}
+  },
+
+  // Level 3 
+  {
+    width: 2600,
+    platforms: [
+      {x: 0, y: 460, width: 3200, height: 80},
+      {x: 280, y: 360, width: 140, height: 20},
+      {x: 520, y: 310, width: 140, height: 20},
+      {x: 820, y: 270, width: 200, height: 20},
+      {x: 1180, y: 320, width: 160, height: 20},
+      {x: 1480, y: 360, width: 160, height: 20},
+      {x: 1880, y: 300, width: 200, height: 20}
+    ],
+    spikes: [
+      {x: 560, y: 310 - 18, width: 60, height: 18},
+      {x: 920, y: 270 - 18, width: 80, height: 18},
+      {x: 1700, y: 460 - 18, width: 120, height: 18}
+    ],
+    movingPlatforms: [
+      {x: 760, y: 270, width: 140, height: 18, x1: 700, x2: 1000, speed: 2.4},
+      {x: 1400, y: 360, width: 120, height: 18, x1: 1320, x2: 1640, speed: 1.6},
+      {x: 2040, y: 300, width: 160, height: 18, x1: 1980, x2: 2360, speed: 2.1}
+    ],
+    goal: {x: 2400, y: 460 - 80, width: 36, height: 80, color: "#FFD54F"},
+    start: {x: 120, y: 380}
+  }
+];
+
+// keep runtime copies for moving platforms (they'll be mutated)
+let runtime = {
+  platforms: [],
+  spikes: [],
+  movingPlatforms: [],
+  goal: null,
+  width: 2400
+};
+
+//  START / RESET LEVEL 
+function startLevel(index) {
+  if (index < 0) index = 0;
+  if (index >= levels.length) {
+    // finished all levels — show you won message
+    gameState = "MENU";
+    currentLevelIndex = 0;
+    alert("You beat all levels! Press Enter to play again.");
+    return;
+  }
+
+  currentLevelIndex = index;
+  const L = levels[currentLevelIndex];
+
+  // copy arrays
+  runtime.platforms = L.platforms.map(p => Object.assign({}, p));
+  runtime.spikes = L.spikes.map(s => Object.assign({}, s));
+  // moving platforms: keep mutable fields x and direction
+  runtime.movingPlatforms = L.movingPlatforms.map(mp => ({
+    x: mp.x,
+    y: mp.y,
+    width: mp.width,
+    height: mp.height,
+    x1: mp.x1,
+    x2: mp.x2,
+    speed: mp.speed,
+    dir: mp.x2 >= mp.x1 ? 1 : -1
+  }));
+  runtime.goal = Object.assign({}, L.goal);
+  runtime.width = L.width || 2200;
+
+  // place player at start
+  player.x = L.start.x;
+  player.y = L.start.y;
+  player.xSpeed = 0;
+  player.ySpeed = 0;
+  player.onGround = false;
+
+  prevY = player.y;
+  cameraX = 0;
+  gameState = "PLAYING";
+}
+
+// DEATH 
+function killPlayer() {
+  gameState = "DEAD";
+}
+
+// LEVEL COMPLETE
+function completeLevel() {
+  gameState = "LEVEL_COMPLETE";
+}
+
+// UPDATE LOOP 
+function update() {
+  if (gameState !== "PLAYING") return;
+
+  //  inputs 
+  if (keys["ArrowRight"] || keys["d"]) player.xSpeed += accel;
+  if (keys["ArrowLeft"]  || keys["a"]) player.xSpeed -= accel;
+
+  // clamp speed
+  if (player.xSpeed > player.maxSpeed) player.xSpeed = player.maxSpeed;
+  if (player.xSpeed < -player.maxSpeed) player.xSpeed = -player.maxSpeed;
+
+  // friction
+  if (!keys["ArrowLeft"] && !keys["ArrowRight"] && !keys["a"] && !keys["d"]) {
+    player.xSpeed *= friction;
+    if (Math.abs(player.xSpeed) < 0.05) player.xSpeed = 0;
+  }
+
+  // jump
+  if ((keys[" "] || keys["ArrowUp"] || keys["w"]) && player.onGround) {
+    player.ySpeed = jumpPower;
+    player.onGround = false;
+  }
+
+  // gravity
+  player.ySpeed += gravity;
+
+  // store prev pos
+  prevY = player.y;
+
+  // move horizontally then vertically
+  player.x += player.xSpeed;
+  player.y += player.ySpeed;
+
+  // moving platforms update 
+  for (const mp of runtime.movingPlatforms) {
+    mp.x += mp.speed * mp.dir;
+    if (mp.x < Math.min(mp.x1, mp.x2)) { mp.x = Math.min(mp.x1, mp.x2); mp.dir *= -1; }
+    if (mp.x + mp.width > Math.max(mp.x1, mp.x2) + mp.width - (mp.x2<mp.x1?0:0)) { // safe clamp
+      if (mp.x > Math.max(mp.x1, mp.x2)) { mp.x = Math.max(mp.x1, mp.x2); mp.dir *= -1; }
+    }
+  }
+
+  //  collisions 
+
+  // reset onGround
+  let wasOnGround = player.onGround;
+  player.onGround = false;
+  let standingOnMovingPlatform = null;
+
+  // check platforms (static)
+  for (const p of runtime.platforms) {
+    if (aabbOverlap(player.x, player.y, player.size, player.size, p.x, p.y, p.width, p.height)) {
+      // is collision from above? check previous bottom <= platform top
+      const prevBottom = prevY + player.size;
+      if (player.y + player.size <= p.y + p.height && player.ySpeed >= 0 && prevBottom <= p.y + 1) {
+        // land on top
+        player.y = p.y - player.size;
+        player.ySpeed = 0;
+        player.onGround = true;
+      } else {
+        // simple horizontal pushback to avoid sticking inside block
+        if (player.x + player.size/2 < p.x + p.width/2) {
+          // push left
+          player.x = p.x - player.size - 0.1;
+          player.xSpeed = Math.min(0, player.xSpeed);
+        } else {
+          // push right
+          player.x = p.x + p.width + 0.1;
+          player.xSpeed = Math.max(0, player.xSpeed);
+        }
+      }
+    }
+  }
+
+  // check moving platforms (they also act like platforms)
+  for (const mp of runtime.movingPlatforms) {
+    if (aabbOverlap(player.x, player.y, player.size, player.size, mp.x, mp.y, mp.width, mp.height)) {
+      const prevBottom = prevY + player.size;
+      if (player.y + player.size <= mp.y + mp.height && player.ySpeed >= 0 && prevBottom <= mp.y + 1) {
+        // land on moving platform
+        player.y = mp.y - player.size;
+        player.ySpeed = 0;
+        player.onGround = true;
+        standingOnMovingPlatform = mp;
+      } else {
+        // horizontal pushback
+        if (player.x + player.size/2 < mp.x + mp.width/2) {
+          player.x = mp.x - player.size - 0.1;
+          player.xSpeed = Math.min(0, player.xSpeed);
+        } else {
+          player.x = mp.x + mp.width + 0.1;
+          player.xSpeed = Math.max(0, player.xSpeed);
+        }
+      }
+    }
+  }
+
+  // if standing on moving platform, carry the player in x by the platform movement
+  if (standingOnMovingPlatform) {
+    player.x += standingOnMovingPlatform.speed * standingOnMovingPlatform.dir;
+  }
+
+  //  spikes
+  for (const s of runtime.spikes) {
+    if (aabbOverlap(player.x, player.y, player.size, player.size, s.x, s.y, s.width, s.height)) {
+      killPlayer();
+      return;
+    }
+  }
+
+  //  detect out-of-bounds death 
+  if (player.y > canvas.height + 600) {
+    killPlayer();
+    return;
+  }
+
+  //  goal (flag)
+  const g = runtime.goal;
+  if (aabbOverlap(player.x, player.y, player.size, player.size, g.x, g.y, g.width, g.height)) {
+    // immediate level advance
+    completeLevel();
+    return;
+  }
+
+  //  camera follow w/ smoothing
+  const targetCam = Math.max(0, player.x - canvas.width / 2 + player.size/2);
+  cameraX += (targetCam - cameraX) * cameraLag;
+
+  // clamp camera to level bounds
+  const maxCam = Math.max(0, runtime.width - canvas.width + 200);
+  if (cameraX > maxCam) cameraX = maxCam;
+  if (cameraX < 0) cameraX = 0;
+}
+
+//  DRAWING  rounded rectangle
+function drawRoundedRect(x,y,w,h,r=4) {
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// draw spike as a triangle strip (simple)
+function drawSpike(x,y,w,h) {
+  const count = Math.max(3, Math.floor(w/12));
+  const step = w / (count - 1);
+  ctx.beginPath();
+  for (let i=0;i<count;i++) {
+    const px = x + i * step;
+    const py = (i % 2 === 0) ? y : y - h;
+    if (i===0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  // close bottom line
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x, y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// DRAW LOOP 
+function draw() {
+  // clear
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // MENU
+  if (gameState === "MENU") {
+    ctx.fillStyle = "#fff";
+    ctx.font = "52px Arial";
+    ctx.fillText("CUBE FLAPPY BIRD GEOMETRIC DASH GAME", 220, 160);
+    ctx.font = "22px Arial";
+    ctx.fillText("Spikes, Moving Platforms, 3 Levels", 240, 210);
+    ctx.font = "26px Arial";
+    ctx.fillText("Press ENTER to Start", 320, 280);
+    ctx.font = "16px Arial";
+    return;
+  }
+
+  // DEAD
+  if (gameState === "DEAD") {
+    // darken background
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    ctx.fillStyle = "#ff5a5a";
+    ctx.font = "64px Arial";
+    ctx.fillText("YOU DIED", 320, 200);
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "22px Arial";
+    ctx.fillText("Press ENTER to Restart Level", 310, 260);
+    return;
+  }
+
+  // LEVEL COMPLETE
+  if (gameState === "LEVEL_COMPLETE") {
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = "#fff";
+    ctx.font = "40px Arial";
+    ctx.fillText(`Level ${currentLevelIndex + 1} Complete!`, 300, 230);
+    ctx.font = "20px Arial";
+    ctx.fillText("Press ENTER to continue", 360, 270);
+    return;
+  }
+
+  // GAMEPLAY DRAWING
+  // background sky (already set by CSS gradient) — add simple distant hills
+  ctx.fillStyle = "#8fd18f";
+  ctx.fillRect(-cameraX * 0.25, 380, 4000, 220);
+  ctx.fillStyle = "#6fa06f";
+  ctx.fillRect(-cameraX * 0.1 + 200, 410, 4000, 160);
+
+  // draw platforms
+  ctx.fillStyle = "#4CAF50";
+  for (const p of runtime.platforms) {
+    ctx.fillRect(p.x - cameraX, p.y, p.width, p.height);
+    ctx.strokeStyle = "rgba(0,0,0,0.2)";
+    ctx.strokeRect(p.x - cameraX, p.y, p.width, p.height);
+  }
+
+  // draw moving platforms (distinct color)
+  for (const mp of runtime.movingPlatforms) {
+    ctx.fillStyle = "#3366aa";
+    ctx.fillRect(mp.x - cameraX, mp.y, mp.width, mp.height);
+    ctx.strokeStyle = "black";
+    ctx.strokeRect(mp.x - cameraX, mp.y, mp.width, mp.height);
+    // small arrows to indicate direction
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.font = "12px Arial";
+    ctx.fillText(mp.dir > 0 ? "→" : "←", mp.x - cameraX + mp.width/2 - 6, mp.y + 13);
+  }
+
+  // draw spikes (hazards) - red
+  ctx.fillStyle = "#c62828";
+  for (const s of runtime.spikes) {
+    drawSpike(s.x - cameraX, s.y, s.width, s.height);
+  }
+
+  // draw goal flag
+  const g = runtime.goal;
+  // pole
+  ctx.fillStyle = "#6b4f1d";
+  ctx.fillRect(g.x - cameraX + g.width/2 - 3, g.y - 40, 6, g.height + 40);
+  // flag
+  ctx.fillStyle = g.color || "#FFD54F";
+  ctx.beginPath();
+  ctx.moveTo(g.x - cameraX + g.width/2 + 3, g.y - 30);
+  ctx.lineTo(g.x - cameraX + g.width/2 + 40, g.y - 18);
+  ctx.lineTo(g.x - cameraX + g.width/2 + 3, g.y - 6);
+  ctx.closePath();
+  ctx.fill();
+
+  // draw player (cube)
+  ctx.fillStyle = player.color;
+  ctx.fillRect(player.x - cameraX, player.y, player.size, player.size);
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(player.x - cameraX, player.y, player.size, player.size);
+
+  // small "face" on cube (simple icon look)
+  ctx.fillStyle = "#222";
+  ctx.fillRect(player.x - cameraX + 8, player.y + 12, 6, 6);
+  ctx.fillRect(player.x - cameraX + player.size - 14, player.y + 12, 6, 6);
+  ctx.fillRect(player.x - cameraX + 10, player.y + player.size - 12, player.size - 20, 4);
+
+  // HUD: level text
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(12,12,180,42);
+  ctx.fillStyle = "#fff";
+  ctx.font = "18px Arial";
+  ctx.fillText(`Level ${currentLevelIndex + 1}`, 22, 38);
+}
+
+// MAIN LOOP 
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+//start loop
+loop();
+
+</script>
+</body>
+</html>
